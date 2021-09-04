@@ -1,0 +1,3 @@
+
+class ImproperlyConfigured(Exception):
+    pass
