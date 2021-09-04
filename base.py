@@ -1,4 +1,5 @@
 import inspect
+from time import sleep
 from exceptions import ImproperlyConfigured
 
 
@@ -71,3 +72,8 @@ class Checker:
 
             if inspect.ismethod(callback_obj):
                 callback_obj(callback_data)
+
+    def run(self, sleep_time):
+        while True:
+            self.run_all_checks()
+            sleep(sleep_time * 300)
