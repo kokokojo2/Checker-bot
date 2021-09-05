@@ -2,6 +2,9 @@ import inspect
 from time import sleep
 from exceptions import ImproperlyConfigured
 
+SUCCESS = 1
+COMPLETED = 0
+ERROR = -1
 
 class BaseFunctionSet:
     silenced_checkers = ()  # if the checker is silenced, its messenger is not called on completed check (code 1)
