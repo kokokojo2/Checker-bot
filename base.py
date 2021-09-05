@@ -4,74 +4,59 @@ from exceptions import ImproperlyConfigured
 
 
 class BaseFunctionSet:
-    silence = {}
-
-
-class BaseMessenger:
-
-    def send_message(self, context):
-        raise NotImplementedError()
-
-    def send_success_message(self, context):
-        raise NotImplementedError()
-
-    def send_completed_message(self, context):
-        raise NotImplementedError()
-
-    def send_errors_message(self, context):
-        raise NotImplementedError()
-
+    silenced_checkers = ()  # if the checker is silenced, its messenger is not called on completed check (code 1)
+    silent_checkers = ()  # do not require messenger to run successfully
 
 class Checker:
-    def __init__(self, function_set: BaseFunctionSet, messenger_obj: BaseMessenger):
+    def __init__(self, function_set: BaseFunctionSet):
         if not isinstance(function_set, BaseFunctionSet):
             raise ImproperlyConfigured(f'Checker`s __init__ method expects BaseFunctionSet instance, but'
                                        f' {type(function_set).__name__} was given instead.')
 
-        if not isinstance(messenger_obj, BaseMessenger):
-            raise ImproperlyConfigured(f'Checker`s __init__ method expects BaseMessenger instance, but'
-                                       f' {type(messenger_obj).__name__} was given instead.')
         raw_members = dir(function_set)
-        filtered_members = [getattr(function_set, member_name) for member_name in raw_members
-                            if member_name.startswith('check_')]
-        self.methods = [member for member in filtered_members if inspect.ismethod(member)]
+        filtered_checkers = [getattr(function_set, member_name) for member_name in raw_members
+                             if member_name.startswith('check_')]
+        self.check_methods = [member for member in filtered_checkers if inspect.ismethod(member)]
 
+        filtered_messengers = [getattr(function_set, member_name) for member_name in raw_members
+                               if member_name.startswith('message_')]
+        self.message_methods = [member for member in filtered_messengers if inspect.ismethod(member)]
         self.function_set = function_set
-        self.messenger = messenger_obj
 
-        if len(self.methods) == 0:
+        # TODO: add check for the presence of messengers
+
+        if len(self.check_methods) == 0:
             raise ImproperlyConfigured(f'Your function_set object does not have any check methods.')
 
+        if len(self.message_methods) == 0:
+            raise ImproperlyConfigured(f'Your function_set object does not have any message methods.')
+
+    def __get_method(self, name):
+        try:
+            method = getattr(
+                self.function_set,
+                next(filter(lambda x: x.startswith(name), dir(self.function_set)))
+            )
+        except AttributeError:
+            return None
+
+        if inspect.ismethod(method):
+            return method
+
     def run_all_checks(self):
-        for method in self.methods:
+        for method in self.check_methods:
             code, message_context, callback_data = method()
 
-            if code == 0:  # means check was successful but did not find something useful
-                if method.__name__ not in self.function_set.silence:
-                    try:
-                        self.messenger.send_completed_message(message_context)
-                    except NotImplementedError:
-                        self.messenger.send_message(message_context)
+            if method.__name__ not in self.function_set.silent_checkers:
+                messenger = self.__get_method(f'message_{method.__name__[6:]}')
 
-            if code == 1:  # means check was successful and found something it is meant to find
-                try:
-                    self.messenger.send_success_message(message_context)
-                except NotImplementedError:
-                    self.messenger.send_message(message_context)
+                if any(code == status for status in [SUCCESS, ERROR]) or \
+                        (method.__name__ not in self.function_set.silenced_checkers and code == COMPLETED):
+                    messenger(code, message_context)
 
-            if code == -1:  # means there is an error during the check not on the developer side
-                try:
-                    self.messenger.send_errors_message(message_context)
-                except NotImplementedError:
-                    self.messenger.send_message(message_context)
-
-            callback_obj = getattr(
-                self.function_set,
-                next(filter(lambda x: x.startswith(f'callback_{method.__name__}'), dir(self.function_set)))
-                )
-
-            if inspect.ismethod(callback_obj):
-                callback_obj(callback_data)
+            callback_obj = self.__get_method(f'callback_{method.__name__[6:]}')
+            if callback_obj is not None:
+                callback_obj(code, callback_data)
 
     def run(self, sleep_time):
         while True:
